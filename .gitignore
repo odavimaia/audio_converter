@@ -1,0 +1,15 @@
+# Ignorar arquivos de sistema e cache
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+
+# Ignorar arquivos de mídia (NÃO SUBIR MÚSICA PRO GITHUB)
+*.mp3
+*.m4a
+*.flac
+*.wav
+*.ogg
+*.wma
+*.aac
+*.opus
