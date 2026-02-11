@@ -1,137 +1,187 @@
 import os
-import subprocess
-import shutil
 import sys
+import shutil
+import subprocess
 import platform
 import unicodedata
 import time
+import concurrent.futures
 
-# === CONFIGURAÇÕES ===
+# === CONFIGURAÇÕES GLOBAIS ===
 TARGET_EXT = ".mp3"
-SOURCE_EXTS = ('.m4a', '.m4b', '.ogg', '.opus', '.flac', '.wav', '.wma', '.aac')
+# Extensões que serão caçadas (incluindo MP3 para normalizar volume)
+SOURCE_EXTS = ('.m4a', '.m4b', '.ogg', '.opus', '.flac', '.wav', '.wma', '.aac', '.mp3')
+
+# Configurações de Áudio
 BITRATE = "320k"
 SAMPLE_RATE = "44100"
 
+# Normalização (Padrão Spotify/Carro)
+LOUDNESS_TARGET = "-14" # LUFS
+TRUE_PEAK = "-1"        # dBTP
+
 def clear_screen():
-    """Limpa o terminal para uma UX mais limpa."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def install_ffmpeg():
-    """Tenta instalar o FFmpeg baseado no SO."""
+    """Tenta instalar o FFmpeg automaticamente baseado no SO."""
     system = platform.system()
-    
-    print(f"\n⚙️  Detectado sistema: {system}")
+    print(f"\n⚙️  Sistema detectado: {system}")
     print("⏳ Tentando instalar FFmpeg automaticamente...")
 
     try:
         if system == "Windows":
-            # Usa Winget (Padrão no Windows 10/11 modernos)
             subprocess.run(["winget", "install", "-e", "--id", "Gyan.FFmpeg"], check=True)
         elif system == "Darwin": # macOS
-            # Usa Homebrew
             subprocess.run(["brew", "install", "ffmpeg"], check=True)
         elif system == "Linux":
-            # Linux é complexo (apt, dnf, pacman). Melhor pedir manual.
-            print("❌ No Linux, a instalação varia por distribuição.")
-            print("👉 Execute: sudo apt install ffmpeg (Ubuntu/Debian) ou equivalente.")
+            print("❌ No Linux, instale manualmente: sudo apt install ffmpeg")
             return False
         else:
-            print("❌ Sistema operacional não suportado para instalação automática.")
             return False
         
-        print("\n✅ Instalação parece ter ocorrido. Verificando...")
         return shutil.which("ffmpeg") is not None
-
     except Exception as e:
-        print(f"\n❌ Falha na instalação automática: {e}")
-        print("👉 Por favor, instale manualmente e reinicie este script.")
+        print(f"❌ Falha na instalação automática: {e}")
         return False
 
 def check_dependencies():
-    """Verifica se o FFmpeg existe e interage com o usuário se não."""
+    """Verifica e garante que o FFmpeg existe."""
     if shutil.which("ffmpeg"):
         return True
 
     clear_screen()
-    print("⚠️  BIBLIOTECA FFMPEG NÃO ENCONTRADA ⚠️")
+    print("⚠️  FFMPEG NÃO ENCONTRADO ⚠️")
     print("---------------------------------------------------")
-    print("O script precisa do 'ffmpeg' para converter os áudios.")
-    print("Sem ele, não é possível transformar os arquivos para o som do carro.")
-    print("---------------------------------------------------")
+    print("Este script precisa do FFmpeg para processar áudio.")
     
-    while True:
-        resp = input("Deseja tentar instalar o FFmpeg agora? (S/N): ").strip().lower()
-        
-        if resp in ('s', 'sim', 'y', 'yes'):
-            if install_ffmpeg():
-                print("\n🎉 FFmpeg instalado com sucesso! Continuando...")
-                time.sleep(2)
-                return True
-            else:
-                input("\nInstallation failed. Pressione Enter para sair...")
-                sys.exit()
-        
-        elif resp in ('n', 'nao', 'no'):
-            print("\n---------------------------------------------------")
-            print("🙏 Obrigado por usar o script.")
-            print("Entendo. O script será encerrado agora.")
-            print("---------------------------------------------------")
-            input("Pressione [ENTER] para fechar o terminal...")
-            sys.exit() # Encerra o script graciosamente
+    resp = input("Deseja tentar instalar agora? (S/N): ").strip().lower()
+    if resp in ('s', 'sim', 'y'):
+        if install_ffmpeg():
+            print("\n🎉 Instalado com sucesso! Continuando...")
+            time.sleep(2)
+            return True
+    
+    print("\n🚫 Instalação cancelada ou falhou. Encerrando.")
+    sys.exit()
 
 def sanitize_filename(filename):
+    """
+    Remove acentos e caracteres especiais.
+    Retorna apenas alfanuméricos, underscores e hifens.
+    """
     nfkd_form = unicodedata.normalize('NFKD', filename)
     filename = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    return "".join([c for c in filename.replace(" ", "_") if c.isalnum() or c in ('_', '-')])
+    # Substitui espaços por _ e remove símbolos perigosos
+    safe_name = filename.replace(" ", "_").replace("&", "e").replace("+", "_")
+    return "".join([c for c in safe_name if c.isalnum() or c in ('_', '-')])
 
-def process_file(root, file):
-    input_path = os.path.join(root, file)
-    safe_base_name = sanitize_filename(os.path.splitext(file)[0])
-    output_path = os.path.join(root, safe_base_name + TARGET_EXT)
+def process_file_task(args):
+    """
+    Função Worker executada em paralelo.
+    Recebe uma tupla (root, filename) e retorna status string.
+    """
+    root, filename = args
+    input_path = os.path.join(root, filename)
+    
+    # Prepara nomes
+    name_no_ext = os.path.splitext(filename)[0]
+    safe_name = sanitize_filename(name_no_ext) + TARGET_EXT
+    output_path = os.path.join(root, safe_name)
+    temp_path = os.path.join(root, f".temp_{safe_name}") # Arquivo oculto temporário
 
-    if input_path == output_path: return
+    # Evita processar arquivos temporários ou loops infinitos
+    if filename.startswith(".temp_"):
+        return None
 
-    print(f"🔄 Processando: {file}")
     try:
-        subprocess.run([
-            'ffmpeg', '-i', input_path, '-vn', '-ar', SAMPLE_RATE, '-ac', '2',
-            '-b:a', BITRATE, '-map_metadata', '0', '-id3v2_version', '3',
-            '-y', '-hide_banner', '-loglevel', 'error', output_path
-        ], check=True)
+        # Filtro de Normalização EBU R128 + Downmix Stereo
+        audio_filter = f"loudnorm=I={LOUDNESS_TARGET}:TP={TRUE_PEAK}:LRA=11"
 
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
-            os.remove(input_path)
-            print(f"   ✅ Sucesso! Original removido.")
+        command = [
+            'ffmpeg',
+            '-i', input_path,
+            '-vn',                   # Sem vídeo
+            '-ar', SAMPLE_RATE,      # 44.1kHz
+            '-ac', '2',              # Stereo Force
+            '-b:a', BITRATE,         # 320k
+            '-af', audio_filter,     # Normalização
+            '-map_metadata', '0',    # Copia tags
+            '-id3v2_version', '3',   # Compatibilidade ID3v2.3
+            '-y',                    # Overwrite
+            '-hide_banner',
+            '-loglevel', 'error',
+            temp_path
+        ]
+        
+        # Executa conversão
+        subprocess.run(command, check=True)
+
+        # Validação de Integridade (> 50KB)
+        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 50000:
+            # Substituição Atômica
+            if os.path.exists(output_path):
+                os.remove(output_path) # Remove antigo se existir (mesmo nome)
+            
+            os.rename(temp_path, output_path) # Move temp para final
+
+            # Limpeza do arquivo original (se for diferente do final)
+            if input_path != output_path and os.path.exists(input_path):
+                os.remove(input_path)
+                return f"✅ Convertido e Limpo: {filename}"
+            
+            return f"✅ Normalizado: {filename}"
         else:
-            print(f"   ⚠️  Erro de integridade. Original mantido.")
+            if os.path.exists(temp_path): os.remove(temp_path)
+            return f"⚠️ Falha de integridade (muito pequeno): {filename}"
 
-    except subprocess.CalledProcessError:
-        print(f"   ❌ Erro no arquivo.")
-        if os.path.exists(output_path): os.remove(output_path)
+    except Exception as e:
+        if os.path.exists(temp_path): os.remove(temp_path)
+        return f"❌ Erro em {filename}: {str(e)}"
 
 def main():
-    # 1. Verifica Dependências antes de tudo
-    check_dependencies()
-    
-    # 2. Inicia o fluxo principal
+    if not check_dependencies(): return
+
     clear_screen()
     current_dir = os.getcwd()
-    print(f"🚀 Iniciando Conversor Universal Automotivo")
+    
+    print(f"🚀 AUDIO CONVERTER PRO (Multithreaded)")
     print(f"📂 Diretório: {current_dir}")
+    print(f"🎚️  Alvo: MP3 320k | {LOUDNESS_TARGET} LUFS (Normalizado)")
     print("---------------------------------------------------")
 
-    count = 0
+    # 1. Fase de Escaneamento
+    print("🔍 Escaneando diretórios...")
+    tasks = []
     for root, dirs, files in os.walk(current_dir):
         for file in files:
-            if file.lower().endswith(SOURCE_EXTS):
-                process_file(root, file)
-                count += 1
+            if file.lower().endswith(SOURCE_EXTS) and not file.startswith(".temp_"):
+                tasks.append((root, file))
 
+    total = len(tasks)
+    if total == 0:
+        print("Nenhum arquivo de áudio encontrado.")
+        return
+
+    print(f"🎯 {total} arquivos na fila. Iniciando processamento paralelo...")
     print("---------------------------------------------------")
-    if count == 0:
-        print("Nenhum arquivo de áudio compatível encontrado.")
-    else:
-        print(f"🏁 Finalizado. {count} arquivos processados.")
+
+    # 2. Fase de Processamento (ThreadPool)
+    start_time = time.time()
+    processed_count = 0
+
+    # Usa número de CPUs da máquina automaticamente
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submete tarefas e processa conforme completam
+        for result in executor.map(process_file_task, tasks):
+            if result:
+                processed_count += 1
+                print(f"[{processed_count}/{total}] {result}")
+
+    duration = time.time() - start_time
+    print("---------------------------------------------------")
+    print(f"🏁 Concluído em {duration:.2f} segundos.")
+    print(f"🔥 Média: {duration/total:.2f}s por música.")
     
     input("\nPressione [ENTER] para sair...")
 

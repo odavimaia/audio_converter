@@ -50,3 +50,5 @@ Logs de erro são exibidos no console caso algum arquivo esteja corrompido.
 
 ## ⚠️ Isenção de Responsabilidade
 Este software realiza operações de exclusão de arquivos (substituição destrutiva). Embora possua verificações de integridade, recomenda-se ter um backup dos arquivos originais antes de executar em grandes bibliotecas.   
+
+- **🔊 Normalização EBU R128:** Aplica normalização inteligente de loudness (-14 LUFS). Isso garante que todas as músicas tenham o mesmo volume percebido, eliminando a necessidade de ficar ajustando o botão de volume do carro entre as faixas.
