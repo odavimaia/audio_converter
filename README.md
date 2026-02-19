@@ -66,7 +66,7 @@ O aplicativo segue os princípios do **Clean Architecture** e do padrão **MVVM 
 
 A versão final empacotada pode ser baixada gratuitamente no **Itch.io**. O instalador já inclui o ambiente Python isolado e os binários do FFmpeg, não exigindo **nenhuma** configuração extra ou instalação prévia no sistema do usuário.
 
-🔗 **[Baixar Audio Suite Pro no Itch.io](Substitua_Pelo_Seu_Link_Aqui)**
+🔗 **[Baixar Audio Suite Pro no Itch.io](https://odavimaia.itch.io/audio-suite-pro)**
 
 > **Nota sobre o Windows SmartScreen:** > Como este é um projeto de engenharia independente (sem um certificado comercial pago de assinatura de código), o Windows pode exibir uma tela azul de alerta ("O Windows protegeu o seu computador") na primeira execução do instalador. 
 > Para prosseguir com segurança, clique em **"Mais informações"** e depois no botão **"Executar assim mesmo"**.
