@@ -27,7 +27,8 @@ class AppViewModel {
     var isManualProcessing by mutableStateOf(false)
     var manualStatus by mutableStateOf("Aguardando seleção...")
 
-    private val downloadPattern = Pattern.compile("(\\d{1,3}\\.\\d)%")
+    // Regex para capturar [índice/total] e a porcentagem
+    private val downloadPattern = Pattern.compile("\\[download\\] \\[(\\d+)/(\\d+)\\]\\s+(\\d{1,3}(?:\\.\\d+)?)%")
     private val conversionPattern = Pattern.compile("\\[(\\d+)/(\\d+)\\]")
 
     fun startProcess() {
@@ -37,7 +38,7 @@ class AppViewModel {
         downloadProgress = 0f
         conversionProgress = 0f
         downloadStatus = "Iniciando..."
-        conversionStatus = "Aguardando..."
+        conversionStatus = "Aguardando download..."
         errorMessage = ""
 
         val fullLogBuffer = StringBuilder()
@@ -51,7 +52,7 @@ class AppViewModel {
                 repository.downloadAudio(urlInput).collect { line ->
                     fullLogBuffer.append(line).append("\n")
 
-                    if (line.contains("%") || line.contains("Downloads finalizados") || line.contains("finalizados")) {
+                    if (line.contains("%") || line.contains("Downloads finalizados")) {
                         scriptRodouComSucesso = true
                     }
                     if (line.contains("ERRO FATAL") || line.contains("Traceback")) {
@@ -70,7 +71,7 @@ class AppViewModel {
                 }
 
                 // FASE 2: CONVERSÃO AUTOMÁTICA
-                conversionStatus = "Preparando arquivos..."
+                conversionStatus = "Normalizando arquivos..."
                 repository.convertAudio().collect { line ->
                     fullLogBuffer.append(line).append("\n")
                     parseConversionLine(line)
@@ -88,54 +89,24 @@ class AppViewModel {
         }
     }
 
-    fun selectFileOrDirectory() {
-        val fileChooser = JFileChooser()
-        fileChooser.fileSelectionMode = JFileChooser.FILES_AND_DIRECTORIES
-        fileChooser.dialogTitle = "Selecione Música ou Pasta para Converter"
-
-        val result = fileChooser.showOpenDialog(null)
-        if (result == JFileChooser.APPROVE_OPTION) {
-            manualPath = fileChooser.selectedFile.absolutePath
-            manualStatus = "Pronto para converter"
-        }
-    }
-
-    fun startManualConversion() {
-        if (manualPath == "Nenhum arquivo selecionado") return
-
-        isManualProcessing = true
-        manualStatus = "Iniciando conversão..."
-        val manualLogBuffer = StringBuilder()
-
-        scope.launch {
-            try {
-                repository.convertCustomPath(manualPath).collect { line ->
-                    manualLogBuffer.append(line).append("\n")
-
-                    val matcher = conversionPattern.matcher(line)
-                    if (matcher.find()) {
-                        manualStatus = "Processando ${matcher.group(1)}/${matcher.group(2)}"
-                    } else if (line.contains("Convertendo")) {
-                        manualStatus = line
-                    }
-                }
-                manualStatus = "Conversão Manual Concluída ✅"
-            } catch (e: Exception) {
-                manualStatus = "Erro Crítico"
-                errorMessage = "Erro na Conversão Manual:\n${e.message}\nLogs:\n$manualLogBuffer"
-            } finally {
-                isManualProcessing = false
-            }
-        }
-    }
-
     private fun parseDownloadLine(line: String) {
         if (line.contains("[download]")) {
             val matcher = downloadPattern.matcher(line)
             if (matcher.find()) {
-                val percent = matcher.group(1).toFloatOrNull() ?: 0f
-                downloadProgress = percent / 100f
-                downloadStatus = "Baixando: ${percent}%"
+                val currentIdx = matcher.group(1).toFloatOrNull() ?: 1f
+                val totalEntries = matcher.group(2).toFloatOrNull() ?: 1f
+                val percentCurrent = matcher.group(3).toFloatOrNull() ?: 0f
+
+                // 1. PROGRESSO TOTAL DO DOWNLOAD (Geral da Playlist)
+                downloadProgress = ((currentIdx - 1) + (percentCurrent / 100f)) / totalEntries
+                downloadStatus = "Baixando ${currentIdx.toInt()}/${totalEntries.toInt()}: ${percentCurrent}%"
+
+                // 2. PROGRESSO DA CONVERSÃO (Preenchimento prévio)
+                // Faz a barra de baixo andar conforme arquivos terminam de baixar
+                if (conversionProgress < 1f) {
+                    conversionProgress = (currentIdx - 1) / totalEntries
+                    conversionStatus = "Aguardando (${currentIdx.toInt() - 1}/${totalEntries.toInt()} prontos)"
+                }
             }
         }
     }
@@ -148,6 +119,37 @@ class AppViewModel {
             if (total > 0) {
                 conversionProgress = current / total
                 conversionStatus = "Processando ${current.toInt()}/${total.toInt()}"
+            }
+        }
+    }
+
+    fun selectFileOrDirectory() {
+        val fileChooser = JFileChooser()
+        fileChooser.fileSelectionMode = JFileChooser.FILES_AND_DIRECTORIES
+        val result = fileChooser.showOpenDialog(null)
+        if (result == JFileChooser.APPROVE_OPTION) {
+            manualPath = fileChooser.selectedFile.absolutePath
+            manualStatus = "Pronto para converter"
+        }
+    }
+
+    fun startManualConversion() {
+        if (manualPath == "Nenhum arquivo selecionado") return
+        isManualProcessing = true
+        manualStatus = "Iniciando conversão..."
+        scope.launch {
+            try {
+                repository.convertCustomPath(manualPath).collect { line ->
+                    val matcher = conversionPattern.matcher(line)
+                    if (matcher.find()) {
+                        manualStatus = "Processando ${matcher.group(1)}/${matcher.group(2)}"
+                    }
+                }
+                manualStatus = "Conversão Manual Concluída ✅"
+            } catch (e: Exception) {
+                manualStatus = "Erro Crítico"
+            } finally {
+                isManualProcessing = false
             }
         }
     }

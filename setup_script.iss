@@ -1,6 +1,6 @@
 ; Script do Inno Setup para Audio Suite Pro
 #define MyAppName "Audio Suite Pro"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Davi Maia"
 #define MyAppExeName "AudioSuitePro.exe"
 
@@ -21,7 +21,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 
 ; Onde salvar o instalador final
 OutputDir=installer_output
-OutputBaseFilename=AudioSuitePro_Setup_v1.0
+OutputBaseFilename=AudioSuitePro_Setup_v1.0.1
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
